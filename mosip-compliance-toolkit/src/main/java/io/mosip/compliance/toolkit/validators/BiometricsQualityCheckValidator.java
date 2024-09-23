@@ -323,7 +323,8 @@ public class BiometricsQualityCheckValidator extends ISOStandardsValidator {
 		boolean isAuth = "Auth".equalsIgnoreCase(purpose);
 		String bioType = dataNode.get(BIO_TYPE).asText();
 		String bioSubType = dataNode.has(BIO_SUBTYPE) ? dataNode.get(BIO_SUBTYPE).asText() : "";
-		float score = dataNode.get("qualityScore").floatValue();
+		String qualityScore = dataNode.get("qualityScore").asText();
+		float score = Float.parseFloat(qualityScore);
 		int sbiScore = Math.round(score);
 		return new DeviceAttributes(specVersion, isAuth, bioType, bioSubType, sbiScore);
 	}
@@ -353,35 +354,36 @@ public class BiometricsQualityCheckValidator extends ISOStandardsValidator {
 			ObjectNode bioScore = (ObjectNode) objectMapper.readValue(scoreJson, ObjectNode.class);
 			String score = bioScore.get("score").asText();
 			biometricScoresItem.put("biometricScore", score);
+			biometricScoresItem.set(AppConstants.SDK_VERSION, bioScore.get(AppConstants.SDK_VERSION));
 			int scoreInt = Integer.parseInt(score);
 			if (isBetween(scoreInt, 0, 10)) {
 				biometricScoresItem.put("biometricScoreRange", "0-10");	
 			}
-			if (isBetween(scoreInt, 10, 20)) {
+			if (isBetween(scoreInt, 11, 20)) {
 				biometricScoresItem.put("biometricScoreRange", "11-20");	
 			}
-			if (isBetween(scoreInt, 20, 30)) {
+			if (isBetween(scoreInt, 21, 30)) {
 				biometricScoresItem.put("biometricScoreRange", "21-30");	
 			}
-			if (isBetween(scoreInt, 30, 40)) {
+			if (isBetween(scoreInt, 31, 40)) {
 				biometricScoresItem.put("biometricScoreRange", "31-40");	
 			}
-			if (isBetween(scoreInt, 40, 50)) {
+			if (isBetween(scoreInt, 41, 50)) {
 				biometricScoresItem.put("biometricScoreRange", "41-50");	
 			}
-			if (isBetween(scoreInt, 50, 60)) {
+			if (isBetween(scoreInt, 51, 60)) {
 				biometricScoresItem.put("biometricScoreRange", "51-60");	
 			}
-			if (isBetween(scoreInt, 60, 70)) {
+			if (isBetween(scoreInt, 61, 70)) {
 				biometricScoresItem.put("biometricScoreRange", "61-70");	
 			}
-			if (isBetween(scoreInt, 70, 80)) {
+			if (isBetween(scoreInt, 71, 80)) {
 				biometricScoresItem.put("biometricScoreRange", "71-80");	
 			}
-			if (isBetween(scoreInt, 80, 90)) {
+			if (isBetween(scoreInt, 81, 90)) {
 				biometricScoresItem.put("biometricScoreRange", "81-90");	
 			}
-			if (isBetween(scoreInt, 90, 100)) {
+			if (isBetween(scoreInt, 91, 100)) {
 				biometricScoresItem.put("biometricScoreRange", "91-100");	
 			}
 			// save biometric scores in database
@@ -456,9 +458,14 @@ public class BiometricsQualityCheckValidator extends ISOStandardsValidator {
 				newInputDto.setMethodRequest(requestBody);
 				newInputDto.setMethodResponse(resp);
 				return sdkQualityCheckValidator.validateResponse(newInputDto);
-			}
-			if (restCallResponse != null && restCallResponse.body() != null) {
-				restCallResponse.body().close();
+			} else {
+				if (restCallResponse != null && restCallResponse.body() != null) {
+					restCallResponse.body().close();
+				}
+				validationResultDto.setStatus(AppConstants.FAILURE);
+				validationResultDto.setDescription("SDK url [" + sdkUrl + "] is not reachable, Unable to connect.");
+				validationResultDto.setDescriptionKey("BIOMETRIC_QUALITY_CHECK_005" + AppConstants.COMMA_SEPARATOR);
+				return validationResultDto;
 			}
 		} catch (Exception e) {
 			if (restCallResponse != null && restCallResponse.body() != null) {
@@ -467,8 +474,6 @@ public class BiometricsQualityCheckValidator extends ISOStandardsValidator {
 			// e.printStackTrace();
 			throw e;
 		}
-		validationResultDto.setStatus(AppConstants.FAILURE);
-		return validationResultDto;
 	}
 }
 

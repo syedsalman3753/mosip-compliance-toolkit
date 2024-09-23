@@ -60,6 +60,14 @@ public class AppConstants {
 
 	public static final String BIOMETRICS = "biometrics";
 
+	public static final String DATA = "data";
+
+	public static final String RCAPTURE = "rcapture";
+
+	public static final String METHOD_NAME = "methodName";
+
+	public static final String IS_ENCRYPTED = "isEncrypted";
+
 	public static final String DECODED_DATA = "dataDecoded";
 
 	public static final String DIGITAL_ID_DECODED_DATA = "digitalIdDecoded";
@@ -89,5 +97,33 @@ public class AppConstants {
 	public static final String REPORT_STATUS_APPROVED = "approved";
 	
 	public static final String REPORT_STATUS_REJECTED = "rejected";
+
+	public static final String CERTIFICATE_TYPE = "X.509";
+
+	public static final String BIOMETRIC_SCORES_FINGER = "Finger";
+
+	public static final String BIOMETRIC_SCORES_FACE = "Face";
+
+	public static final String BIOMETRIC_SCORES_IRIS = "Iris";
+
+	public static final String ENGINE = "engine";
+
+	public static final String SDK_VERSION = "version";
+
+	public static final String REGEX_PATTERN = "^[a-zA-Z0-9\\s_-]+$";
+
+	public static final String URL_REGEX_PATTERN = "^(http|https)://(.*)";
+
+	public static final String ABIS_URL_REGEX_PATTERN = "^(ws|wss)://(.*)";
+
+	public static final String FILE_NAME_REGEX_PATTERN = "^[a-zA-Z0-9\\s_.-]+$";
+
+	public static final String VERSION_REGEX_PATTERN = "^\\d+(\\.\\d+)*$";
 	
+	public static final String YES = "YES";
+
+	public static final String TERMS_AND_CONDTIONS_TEMPLATE = "terms_and_conditions_template";
+
+	public static final String TO_BE_ADDED = "To_Be_Added";
+
 }

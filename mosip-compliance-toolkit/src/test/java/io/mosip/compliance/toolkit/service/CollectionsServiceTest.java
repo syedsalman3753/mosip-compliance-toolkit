@@ -129,22 +129,22 @@ public class CollectionsServiceTest {
         Mockito.when(authentication.getPrincipal()).thenReturn(authUserDetails);
         SecurityContextHolder.setContext(securityContext);
         Mockito.when(collectionsRepository.getCollectionById(Mockito.any(), Mockito.any())).thenReturn(collectionEntity);
-        collectionsService.getCollectionById(id);
+        collectionsService.getCollectionById(id, partnerId);
 
         collectionEntity.setSbiProjectId("sbi");
         Mockito.when(collectionsRepository.getCollectionById(Mockito.any(), Mockito.any())).thenReturn(collectionEntity);
-        collectionsService.getCollectionById(id);
+        collectionsService.getCollectionById(id, partnerId);
 
         collectionEntity.setSbiProjectId(null);
         collectionEntity.setSdkProjectId("sdk");
         Mockito.when(collectionsRepository.getCollectionById(Mockito.any(), Mockito.any())).thenReturn(collectionEntity);
-        collectionsService.getCollectionById(id);
+        collectionsService.getCollectionById(id, partnerId);
 
         collectionEntity.setSbiProjectId(null);
         collectionEntity.setSdkProjectId(null);
         collectionEntity.setAbisProjectId("abis");
         Mockito.when(collectionsRepository.getCollectionById(Mockito.any(), Mockito.any())).thenReturn(collectionEntity);
-        ResponseWrapper<CollectionDto> result = collectionsService.getCollectionById(id);
+        ResponseWrapper<CollectionDto> result = collectionsService.getCollectionById(id, partnerId);
 
         CollectionDto collectionDto = new CollectionDto();
         collectionDto.setProjectId("abis");
@@ -164,7 +164,7 @@ public class CollectionsServiceTest {
         Mockito.when(authentication.getPrincipal()).thenReturn(authUserDetails);
         SecurityContextHolder.setContext(securityContext);
         Mockito.when(collectionsRepository.getCollectionById(Mockito.any(), Mockito.any())).thenReturn(null);
-        ResponseWrapper<CollectionDto> result = collectionsService.getCollectionById(id);
+        ResponseWrapper<CollectionDto> result = collectionsService.getCollectionById(id, partnerId);
         Assert.assertNull(result.getResponse());
     }
 
@@ -174,7 +174,7 @@ public class CollectionsServiceTest {
      */
     @Test
     public void getCollectionByIdTestException(){
-        collectionsService.getCollectionById(id);
+        collectionsService.getCollectionById(id, partnerId);
     }
 
 
@@ -268,6 +268,7 @@ public class CollectionsServiceTest {
     @Test
     public void addCollectionTest(){
         CollectionRequestDto requestDto = new CollectionRequestDto();
+        requestDto.setCollectionName("abc");
         collectionsService.addCollection(requestDto);
         Mockito.when(securityContext.getAuthentication()).thenReturn(authentication);
         MosipUserDto mosipUserDto = getMosipUserDto();
@@ -278,7 +279,7 @@ public class CollectionsServiceTest {
         CollectionDto collectionDto = new CollectionDto();
         collectionDto.setProjectId("SBI");
         requestDto.setProjectType("SBI");
-        requestDto.setCollectionName(String.valueOf(collectionDto));
+        requestDto.setCollectionName("abc");
 
         CollectionEntity outputEntity = new CollectionEntity();
         Mockito.when(collectionsRepository.getSbiCollectionByName(Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(null);
@@ -291,12 +292,12 @@ public class CollectionsServiceTest {
 //        type = ABIS
         collectionDto.setCollectionId("ABIS");
         requestDto.setProjectType("ABIS");
-        requestDto.setCollectionName(String.valueOf(collectionDto));
+        requestDto.setCollectionName("abc");
         collectionsService.addCollection(requestDto);
 //        type = SDK
         collectionDto.setCollectionId("SDK");
         requestDto.setProjectType("SDK");
-        requestDto.setCollectionName(String.valueOf(collectionDto));
+        requestDto.setCollectionName("abc");
         ResponseWrapper<CollectionDto> response = collectionsService.addCollection(requestDto);
         CollectionDto result = new CollectionDto();
         Assert.assertEquals(result, response.getResponse());
@@ -401,6 +402,8 @@ public class CollectionsServiceTest {
         testCaseWrapper.setResponse(testCaseDtoList);
         Mockito.when(testCasesService.getSbiTestCases(Mockito.any(),Mockito.any(),Mockito.any(),Mockito.any(), Mockito.any())).thenReturn(testCaseWrapper);
         ReflectionTestUtils.setField(collectionsService, "complianceIgnoreTestcases", "s122,s123");
+        ReflectionTestUtils.setField(collectionsService, "complianceCollectionName", "compliance collection");
+        ReflectionTestUtils.setField(collectionsService, "qualityAssessmentCollectionName", "quality assessment collection");
         collectionsService.addDefaultCollection(collectionType, sbiProjectDto, null, null,"sbi123");
 
         //sdk

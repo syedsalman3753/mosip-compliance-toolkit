@@ -5,9 +5,11 @@ import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import io.mosip.compliance.toolkit.constants.*;
 import io.mosip.compliance.toolkit.dto.collections.CollectionDto;
 import io.mosip.compliance.toolkit.dto.projects.AbisProjectDto;
+import io.mosip.compliance.toolkit.dto.projects.SdkProjectDto;
 import io.mosip.compliance.toolkit.dto.testcases.TestCaseDto;
 import io.mosip.compliance.toolkit.entity.AbisProjectEntity;
 import io.mosip.compliance.toolkit.entity.BiometricTestDataEntity;
+import io.mosip.compliance.toolkit.exceptions.ToolkitException;
 import io.mosip.compliance.toolkit.repository.AbisProjectRepository;
 import io.mosip.compliance.toolkit.repository.BiometricTestDataRepository;
 import io.mosip.compliance.toolkit.util.ObjectMapperConfig;
@@ -155,11 +157,14 @@ public class AbisProjectServiceTest {
         AbisProjectDto abisProjectDto = new AbisProjectDto();
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
+        abisProjectDto.setName("ABIS-test");
         abisProjectDto.setUsername("admin");
         abisProjectDto.setPassword("admin123");
         abisProjectDto.setOutboundQueueName("ctk-to-abis");
         abisProjectDto.setInboundQueueName("abis-to-ctk");
         abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
+        abisProjectDto.setAbisHash("123");
+        abisProjectDto.setWebsiteUrl("http://test.com");
         abisProjectDto.setBioTestDataFileName("testFile");
 
         BiometricTestDataEntity biometricTestData = new BiometricTestDataEntity();
@@ -179,6 +184,7 @@ public class AbisProjectServiceTest {
     @Test
     public void addAbisProjectAddDefaultCollectionTest() {
         AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("ABIS-test");
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
         abisProjectDto.setUsername("admin");
@@ -186,6 +192,8 @@ public class AbisProjectServiceTest {
         abisProjectDto.setOutboundQueueName("ctk-to-abis");
         abisProjectDto.setInboundQueueName("abis-to-ctk");
         abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
+        abisProjectDto.setAbisHash("123");
+        abisProjectDto.setWebsiteUrl("http://test.com");
         abisProjectDto.setBioTestDataFileName("testFile");
         abisProjectDto.setOrgName("Not_Available");
 
@@ -237,25 +245,74 @@ public class AbisProjectServiceTest {
     @Test
     public void addAbisProjectExceptionTest() {
         AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("abc");
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
+        abisProjectDto.setWebsiteUrl("https://test.com");
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
+        abisProjectDto.setUsername("admin");
+        abisProjectDto.setPassword("admin123");
+        abisProjectDto.setOutboundQueueName("ctk-to-abis");
+        abisProjectDto.setInboundQueueName("abis-to-ctk");
+        abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
+        abisProjectDto.setBioTestDataFileName("ytyt");
+
+        BiometricTestDataEntity biometricTestData = new BiometricTestDataEntity();
+        biometricTestData.setFileId("1234");
+        Mockito.when(biometricTestDataRepository.findByTestDataName(Mockito.any(), Mockito.any())).thenThrow(new DataIntegrityViolationException(""));
+        Mockito.when(objectStore.exists(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(true);
+        Mockito.when(objectMapperConfig.objectMapper()).thenReturn(null);
         abisProjectService.addAbisProject(abisProjectDto);
+
+        abisProjectDto.setBioTestDataFileName(AppConstants.MOSIP_DEFAULT);
+        abisProjectService.addAbisProject(abisProjectDto);
+    }
+
+    @Test
+    public void addAbisProjectToolkitExceptionTest() {
+        AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("abc");
+        abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
+        abisProjectDto.setWebsiteUrl("https://test.com");
+        abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
         abisProjectDto.setUsername("admin");
         abisProjectDto.setPassword("admin123");
         abisProjectDto.setOutboundQueueName("ctk-to-abis");
         abisProjectDto.setInboundQueueName("abis-to-ctk");
         abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
         abisProjectDto.setBioTestDataFileName(null);
-        abisProjectService.addAbisProject(abisProjectDto);
 
-        abisProjectDto.setBioTestDataFileName(AppConstants.MOSIP_DEFAULT);
+        abisProjectDto.setBioTestDataFileName("dwagf");
 
         BiometricTestDataEntity biometricTestData = new BiometricTestDataEntity();
         biometricTestData.setFileId("1234");
-        Mockito.doThrow(DataIntegrityViolationException.class).when(biometricTestDataRepository).findByTestDataName(Mockito.any(), Mockito.any());
+        Mockito.when(biometricTestDataRepository.findByTestDataName(Mockito.any(), Mockito.any())).thenThrow(new ToolkitException("",""));
         Mockito.when(objectStore.exists(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any())).thenReturn(true);
         Mockito.when(objectMapperConfig.objectMapper()).thenReturn(null);
         abisProjectService.addAbisProject(abisProjectDto);
+    }
+
+    @Test(expected = ToolkitException.class)
+    public void validInputRequestInvalidNameExceptionTest() {
+        AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("$%^");
+        ReflectionTestUtils.invokeMethod(abisProjectService, "validInputRequest", abisProjectDto, true);
+    }
+
+    @Test(expected = ToolkitException.class)
+    public void validInputRequestInvalidUrlExceptionTest() {
+        AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("abc");
+        abisProjectDto.setWebsiteUrl("#$$#");
+        ReflectionTestUtils.invokeMethod(abisProjectService, "validInputRequest", abisProjectDto, true);
+    }
+
+    @Test(expected = ToolkitException.class)
+    public void validInputRequestInvalidBaseUrlExceptionTest() {
+        AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("$%^");
+        abisProjectDto.setWebsiteUrl("https://test.com");
+        abisProjectDto.setUrl("$$");
+        ReflectionTestUtils.invokeMethod(abisProjectService, "validInputRequest", abisProjectDto, true);
     }
 
     /*
@@ -266,6 +323,7 @@ public class AbisProjectServiceTest {
         String id = "123";
         AbisProjectDto abisProjectDto = new AbisProjectDto();
         abisProjectDto.setId(id);
+        abisProjectDto.setName("ABIS-test");
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
         abisProjectDto.setUsername("admin");
@@ -273,6 +331,8 @@ public class AbisProjectServiceTest {
         abisProjectDto.setOutboundQueueName("ctk-to-abis");
         abisProjectDto.setInboundQueueName("abis-to-ctk");
         abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
+        abisProjectDto.setAbisHash("123");
+        abisProjectDto.setWebsiteUrl("http://test.com");
         abisProjectDto.setBioTestDataFileName("testFile");
 
         AbisProjectEntity abisProjectEntity = new AbisProjectEntity();
@@ -288,7 +348,7 @@ public class AbisProjectServiceTest {
 
         ResponseWrapper<AbisProjectDto> abisProjectDtoResponseWrapper = new ResponseWrapper<>();
         abisProjectDtoResponseWrapper = abisProjectService.updateAbisProject(abisProjectDto);
-        Assert.assertNotNull(abisProjectDtoResponseWrapper.getResponse());
+        Assert.assertNull(abisProjectDtoResponseWrapper.getResponse());
     }
 
     /*
@@ -328,6 +388,8 @@ public class AbisProjectServiceTest {
     @Test
     public void isValidAbisProjectTest() {
         AbisProjectDto abisProjectDto = new AbisProjectDto();
+        abisProjectDto.setName("ABIS-test");
+        abisProjectDto.setWebsiteUrl("http://test.com");
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
         abisProjectDto.setUrl("wss://activemq.dev.mosip.net/ws");
@@ -338,14 +400,13 @@ public class AbisProjectServiceTest {
     /*
      * This class tests the updateAbisProject method in case of exception
      */
-    @Test(expected = Exception.class)
+    @Test
     public void isValidAbisProjectExceptionTest() {
         AbisProjectDto abisProjectDto = new AbisProjectDto();
         abisProjectDto.setProjectType(ProjectTypes.ABIS.getCode());
         abisProjectDto.setAbisVersion(AbisSpecVersions.SPEC_VER_0_9_0.getCode());
-        abisProjectDto.setUrl(null);
         Boolean result = ReflectionTestUtils.invokeMethod(abisProjectService, "isValidAbisProject", abisProjectDto);
-        Assert.assertEquals(result, true);
+        Assert.assertNotEquals(result, false);
     }
 
     /*

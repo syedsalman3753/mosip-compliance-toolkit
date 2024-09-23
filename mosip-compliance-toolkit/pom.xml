@@ -11,9 +11,10 @@
 	</parent>
 	<groupId>io.mosip.compliance</groupId>
 	<artifactId>mosip-compliance-toolkit-service</artifactId>
-	<version>1.4.0-SNAPSHOT</version>
+	<version>1.5.0-SNAPSHOT</version>
 	<name>mosip-compliance-toolkit-service</name>
 	<description>mosip compliance toolkit</description>
+	<url>https://github.com/mosip/mosip-compliance-toolkit</url>
 
 	<licenses>
 		<license>
@@ -77,9 +78,9 @@
 		<io.micrometer.prometheus.version>1.4.2</io.micrometer.prometheus.version>
 		
 		<!-- Object Store -->
-		<kernel.khazana.version>1.2.0.1-B2</kernel.khazana.version>
+		<kernel.khazana.version>1.2.0.1</kernel.khazana.version>
 		
-		<biometrics-util.version>1.2.0.1-B4</biometrics-util.version>
+		<biometrics-util.version>1.2.0.1</biometrics-util.version>
 		<org.openpnp.opencv.version>4.5.3-4</org.openpnp.opencv.version>
 		<jnbis.version>2.0.2</jnbis.version>
 		<imagedecoder.version>0.9.0</imagedecoder.version>

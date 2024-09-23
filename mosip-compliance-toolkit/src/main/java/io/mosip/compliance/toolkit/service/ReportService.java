@@ -12,9 +12,13 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
+import io.mosip.compliance.toolkit.entity.ComplianceReportSummaryEntity;
+import io.mosip.compliance.toolkit.exceptions.ToolkitException;
 import org.apache.velocity.VelocityContext;
 import org.apache.velocity.app.VelocityEngine;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -47,6 +51,7 @@ import io.mosip.compliance.toolkit.dto.projects.AbisProjectDto;
 import io.mosip.compliance.toolkit.dto.projects.SbiProjectDto;
 import io.mosip.compliance.toolkit.dto.projects.SdkProjectDto;
 import io.mosip.compliance.toolkit.dto.report.AbisProjectTable;
+import io.mosip.compliance.toolkit.dto.report.BiometricScores;
 import io.mosip.compliance.toolkit.dto.report.ComplianceTestRunSummaryDto;
 import io.mosip.compliance.toolkit.dto.report.PartnerDetailsDto;
 import io.mosip.compliance.toolkit.dto.report.PartnerDetailsDto.Partner;
@@ -78,6 +83,18 @@ import io.mosip.kernel.core.logger.spi.Logger;
 
 @Component
 public class ReportService {
+ 	
+  private static final String RACES_STR = "races";
+
+	private static final String OCCUPATIONS_STR = "occupations";
+
+	private static final String AGE_GROUPS_STR = "ageGroups";
+
+	private static final String TEST_RUN_REPORT_VM = "testRunReport.vm";
+
+	private static final String BIOMETRIC_TYPE = "biometricType";
+
+	private static final String BIOMETRIC_SCORES = "biometricScores";
 
 	private static final String STATUS_TEXT = "statusText";
 
@@ -175,6 +192,18 @@ public class ReportService {
 	@Autowired
 	ResourceCacheService resourceCacheService;
 
+	@Autowired
+	BiometricScoresService biometricScoresService;
+
+	@Value("#{'${mosip.toolkit.quality.assessment.age.groups}'.split(',')}")
+	private List<String> ageGroups;
+
+	@Value("#{'${mosip.toolkit.quality.assessment.occupations}'.split(',')}")
+	private List<String> occupations;
+
+	@Value("#{'${mosip.toolkit.quality.assessment.races}'.split(',')}")
+	private List<String> races;
+
 	private AuthUserDetails authUserDetails() {
 		return (AuthUserDetails) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
 	}
@@ -218,7 +247,8 @@ public class ReportService {
 			}
 			SbiProjectTable sbiProjectTable = new SbiProjectTable();
 			if (ProjectTypes.SBI.getCode().equals(projectType)) {
-				String invalidTestCaseId = this.validateDeviceInfo(testRunDetailsResponseDto, sbiProjectTable);
+				String invalidTestCaseId = this.validateDeviceInfo(getPartnerId(), testRunDetailsResponseDto,
+						sbiProjectTable);
 				if (!BLANK_STRING.equals(invalidTestCaseId)) {
 					return handleValidationErrors(requestDto, VALIDATION_ERR_DEVICE_INFO + invalidTestCaseId);
 				}
@@ -262,9 +292,9 @@ public class ReportService {
 			}
 			// 4. Populate all attributes in velocity template
 			VelocityContext velocityContext = populateVelocityAttributes(testRunDetailsResponseDto, sbiProjectDto,
-					sdkProjectDto, abisProjectDto, origin, projectType, projectId, sbiProjectTable);
+					sdkProjectDto, abisProjectDto, origin, projectType, projectId, sbiProjectTable, null, null);
 			// 5. Merge velocity HTML template with all attributes
-			String mergedHtml = mergeVelocityTemplate(velocityContext, "testRunReport.vm");
+			String mergedHtml = mergeVelocityTemplate(velocityContext, TEST_RUN_REPORT_VM);
 			// 6. Covert the merged HTML to PDF
 			ByteArrayResource resource = convertHtmltToPdf(mergedHtml);
 			// 7. Save Report Data in DB for future
@@ -274,6 +304,96 @@ public class ReportService {
 
 		} catch (Exception e) {
 			log.info("sessionId", "idType", "id", "Exception in generateDraftReport " + e.getLocalizedMessage());
+			try {
+				return handleValidationErrors(requestDto, e.getLocalizedMessage());
+			} catch (Exception e1) {
+				return ResponseEntity.noContent().build();
+			}
+		}
+
+	}
+
+	public ResponseEntity<?> generateDraftQAReport(ReportRequestDto requestDto, String origin) {
+		try {
+			log.info("sessionId", "idType", "id", "Started generateDraftQAReport processing");
+			String projectType = requestDto.getProjectType();
+			String projectId = requestDto.getProjectId();
+			logInput(requestDto, projectType, projectId);
+			// 1. Basic request validation
+			if (!ProjectTypes.SBI.getCode().equals(projectType)) {
+				return handleValidationErrors(requestDto, "This report is availble only for SBI projects");
+			}
+			if (!Objects.nonNull(projectId)) {
+				return handleValidationErrors(requestDto, "Invalid request. Project Id cannot be null");
+			}
+			if (!Objects.nonNull(requestDto.getTestRunId())) {
+				return handleValidationErrors(requestDto, "Invalid request. Test Run Id cannot be null");
+			}
+			// 2. get the test run details
+			ResponseWrapper<TestRunDetailsResponseDto> testRunDetailsResponse = getTestRunDetails(
+					requestDto.getTestRunId());
+			ResponseEntity<Resource> errResource = handleServiceErrors(requestDto, testRunDetailsResponse.getErrors());
+			if (errResource != null) {
+				return errResource;
+			}
+			TestRunDetailsResponseDto testRunDetailsResponseDto = testRunDetailsResponse.getResponse();
+			// 3. Business rules validations to check that report can be generated
+			// Chk if report is already under review, so new report cannot be generated
+			ComplianceTestRunSummaryPK pk = new ComplianceTestRunSummaryPK();
+			pk.setPartnerId(getPartnerId());
+			pk.setProjectId(projectId);
+			pk.setCollectionId(testRunDetailsResponseDto.getCollectionId());
+			Optional<ComplianceTestRunSummaryEntity> optionalEntity = complianceTestRunSummaryRepository.findById(pk);
+			if (optionalEntity.isPresent() && projectType.equals(optionalEntity.get().getProjectType())) {
+				if (!AppConstants.REPORT_STATUS_DRAFT.equals(optionalEntity.get().getReportStatus())) {
+					// report is already under review, so new report cannot be generated
+					return handleValidationErrors(requestDto, VALIDATION_ERR_REPORT_UNDER_REVIEW);
+				}
+			}
+			SbiProjectTable sbiProjectTable = new SbiProjectTable();
+			String invalidTestCaseId = this.validateDeviceInfo(getPartnerId(), testRunDetailsResponseDto,
+					sbiProjectTable);
+			if (!BLANK_STRING.equals(invalidTestCaseId)) {
+				return handleValidationErrors(requestDto, VALIDATION_ERR_DEVICE_INFO + invalidTestCaseId);
+			}
+			// 4. Get the Project details
+			SbiProjectDto sbiProjectDto = null;
+			ResponseWrapper<SbiProjectDto> sbiProjectResponse = sbiProjectService.getSbiProject(projectId);
+			ResponseEntity<Resource> sbiErrResource = handleServiceErrors(requestDto, sbiProjectResponse.getErrors());
+			if (sbiErrResource != null) {
+				return sbiErrResource;
+			}
+			sbiProjectDto = sbiProjectResponse.getResponse();
+			String biometricType = sbiProjectDto.getDeviceType();
+			// 5. Get the list of biometric scores
+			List<BiometricScores> biometricScoresList = null;
+			if (AppConstants.BIOMETRIC_SCORES_FINGER.equals(biometricType)) {
+				biometricScoresList = biometricScoresService.getFingerBiometricScoresList(getPartnerId(), projectId,
+						requestDto.getTestRunId());
+			}
+			if (AppConstants.BIOMETRIC_SCORES_FACE.equals(biometricType)) {
+				biometricScoresList = biometricScoresService.getFaceBiometricScoresList(getPartnerId(), projectId,
+						requestDto.getTestRunId());
+			}
+			if (AppConstants.BIOMETRIC_SCORES_IRIS.equals(biometricType)) {
+				biometricScoresList = biometricScoresService.getIrisBiometricScoresList(getPartnerId(), projectId,
+						requestDto.getTestRunId());
+			}
+			// 6. Populate all attributes in velocity template
+			VelocityContext velocityContext = populateVelocityAttributes(testRunDetailsResponseDto, sbiProjectDto, null,
+					null, origin, projectType, projectId, sbiProjectTable, biometricScoresList, biometricType);
+
+			// 7. Merge velocity HTML template with all attributes
+			String mergedHtml = mergeVelocityTemplate(velocityContext, TEST_RUN_REPORT_VM);
+			// 8. Covert the merged HTML to PDF
+			ByteArrayResource resource = convertHtmltToPdf(mergedHtml);
+			// 9. Save Report Data in DB for future
+			saveReportData(projectType, projectId, testRunDetailsResponseDto, velocityContext);
+			// 10. Send PDF in response
+			return sendPdfResponse(requestDto, resource);
+
+		} catch (Exception e) {
+			log.info("sessionId", "idType", "id", "Exception in generateDraftQAReport " + e.getLocalizedMessage());
 			try {
 				return handleValidationErrors(requestDto, e.getLocalizedMessage());
 			} catch (Exception e1) {
@@ -326,7 +446,21 @@ public class ReportService {
 				Integer.parseInt(velocityContext.get(COUNT_OF_PASSED_TEST_CASES).toString()));
 		reportDataDto.setCountOfFailedTestCases(
 				Integer.parseInt(velocityContext.get(COUNT_OF_FAILED_TEST_CASES).toString()));
-
+		if (velocityContext.get(BIOMETRIC_TYPE) != null && velocityContext.get(BIOMETRIC_SCORES) != null) {
+			reportDataDto.setBiometricType(velocityContext.get(BIOMETRIC_TYPE).toString());
+			reportDataDto.setAgeGroups(getObjectMapper().convertValue(velocityContext.get(AGE_GROUPS_STR),
+					new TypeReference<List<String>>() {
+					}));
+			reportDataDto.setOccupations(getObjectMapper().convertValue(velocityContext.get(OCCUPATIONS_STR),
+					new TypeReference<List<String>>() {
+					}));
+			reportDataDto.setRaces(
+					getObjectMapper().convertValue(velocityContext.get(RACES_STR), new TypeReference<List<String>>() {
+					}));
+			reportDataDto.setBiometricScores(getObjectMapper().convertValue(velocityContext.get(BIOMETRIC_SCORES),
+					new TypeReference<List<BiometricScores>>() {
+					}));
+    }
 		LocalDateTime nowDate = LocalDateTime.now();
 		ComplianceTestRunSummaryEntity entity = new ComplianceTestRunSummaryEntity();
 		entity.setProjectId(projectId);
@@ -391,7 +525,8 @@ public class ReportService {
 
 	private VelocityContext populateVelocityAttributes(TestRunDetailsResponseDto testRunDetailsResponseDto,
 			SbiProjectDto sbiProjectDto, SdkProjectDto sdkProjectDto, AbisProjectDto abisProjectDto, String origin,
-			String projectType, String projectId, SbiProjectTable sbiProjectTable) throws Exception {
+			String projectType, String projectId, SbiProjectTable sbiProjectTable,
+			List<BiometricScores> biometricScoresList, String biometricType) throws Exception {
 
 		VelocityContext velocityContext = new VelocityContext();
 		velocityContext.put(PROJECT_TYPE, projectType);
@@ -423,6 +558,13 @@ public class ReportService {
 		velocityContext.put(TOTAL_TEST_CASES_COUNT, countOfAllTestCases);
 		velocityContext.put(COUNT_OF_PASSED_TEST_CASES, countOfSuccessTestCases);
 		velocityContext.put(COUNT_OF_FAILED_TEST_CASES, countOfFailedTestCases);
+		if (biometricScoresList != null && biometricType != null) {
+			velocityContext.put(AGE_GROUPS_STR, ageGroups);
+			velocityContext.put(OCCUPATIONS_STR, occupations);
+			velocityContext.put(RACES_STR, races);
+			velocityContext.put(BIOMETRIC_TYPE, biometricType);
+			velocityContext.put(BIOMETRIC_SCORES, biometricScoresList);
+		}
 		log.info("sessionId", "idType", "id", "Added all attributes in velocity template successfully");
 		return velocityContext;
 	}
@@ -458,64 +600,93 @@ public class ReportService {
 		return invalidTestCaseId;
 	}
 
-	private String validateDeviceInfo(TestRunDetailsResponseDto testRunDetailsResponseDto,
+	private String validateDeviceInfo(String partnerId, TestRunDetailsResponseDto testRunDetailsResponseDto,
 			SbiProjectTable sbiProjectTable) {
 		List<TestRunDetailsDto> testRunDetailsList = testRunDetailsResponseDto.getTestRunDetailsList();
 		String invalidTestCaseId = BLANK_STRING;
 		boolean validationResult = true;
-		for (TestRunDetailsDto testRunDetailsDto : testRunDetailsList) {
-			if (validationResult) {
-				// check if the method is "discover"
+		String currentTestCaseId = BLANK_STRING;
+		for (TestRunDetailsDto testRunPartialDetails : testRunDetailsList) {
+			boolean proceed = false;
+			if (!currentTestCaseId.equals(testRunPartialDetails.getTestcaseId())) {
+				proceed = true;
+				currentTestCaseId = testRunPartialDetails.getTestcaseId();
+			} else if (currentTestCaseId.equals(testRunPartialDetails.getTestcaseId())) {
+				proceed = false;
+			}
+			log.info("currentTestCaseId: " + currentTestCaseId);
+			log.info("methodId: " + testRunPartialDetails.getMethodId());
+			log.info("proceed: " + proceed);
+			if (proceed) {
+				// get the method details
+				TestRunDetailsDto testRunFullDetails = null;
 				try {
-					ArrayNode discoverRespArr = (ArrayNode) getObjectMapper()
-							.readValue(testRunDetailsDto.getMethodResponse(), ArrayNode.class);
-					if (discoverRespArr != null && discoverRespArr.size() > 0) {
-						ObjectNode discoverResp = (ObjectNode) discoverRespArr.get(0);
-						validationResult = validateDeviceMakeModelSerialNo(sbiProjectTable, validationResult,
-								discoverResp);
+					log.info("sessionId", "idType", "id",
+							"Fetching full test run details: " + testRunPartialDetails.getMethodId());
+					ResponseWrapper<TestRunDetailsDto> testRunFullDetailsResp = testRunService.getMethodDetails(
+							partnerId, testRunPartialDetails.getRunId(), testRunPartialDetails.getTestcaseId(),
+							testRunPartialDetails.getMethodId());
+					if (testRunFullDetailsResp != null) {
+						testRunFullDetails = testRunFullDetailsResp.getResponse();
 					}
 				} catch (Exception ex) {
-					// ignore since method may not be "discover"
+					log.debug("sessionId", "idType", "id", ex.getStackTrace());
+					log.debug("sessionId", "idType", "id", "unable to fetch test run full details{}",
+							testRunPartialDetails.getTestcaseId());
 				}
-			}
-			if (validationResult) {
-				// check if the method is "deviceInfo"
-				try {
-					ArrayNode deviceInfoRespArr = (ArrayNode) getObjectMapper()
-							.readValue(testRunDetailsDto.getMethodResponse(), ArrayNode.class);
-					ObjectNode deviceInfoResp = null;
-					if (deviceInfoRespArr != null && deviceInfoRespArr.size() > 0) {
-						deviceInfoResp = (ObjectNode) deviceInfoRespArr.get(0);
-						ObjectNode deviceInfoDecoded = (ObjectNode) deviceInfoResp
-								.get(AppConstants.DEVICE_INFO_DECODED);
-						validationResult = validateDeviceMakeModelSerialNo(sbiProjectTable, validationResult,
-								deviceInfoDecoded);
-					}
-				} catch (Exception ex) {
-					// ignore since method may not be "deviceInfo"
-				}
-			}
-			if (validationResult) {
-				// check if the method is "capture" or "rcapture"
-				try {
-					ObjectNode methodResponse = (ObjectNode) getObjectMapper()
-							.readValue(testRunDetailsDto.getMethodResponse(), ObjectNode.class);
-					JsonNode arrBiometricNodes = methodResponse.get(AppConstants.BIOMETRICS);
-					if (!arrBiometricNodes.isNull() && arrBiometricNodes.isArray()) {
-						for (final JsonNode biometricNode : arrBiometricNodes) {
-							JsonNode dataNode = biometricNode.get(AppConstants.DECODED_DATA);
+				if (validationResult && testRunFullDetails != null && testRunFullDetails.getMethodResponse() != null) {
+					// check if the method is "discover"
+					try {
+						ArrayNode discoverRespArr = (ArrayNode) getObjectMapper()
+								.readValue(testRunFullDetails.getMethodResponse(), ArrayNode.class);
+						if (discoverRespArr != null && discoverRespArr.size() > 0) {
+							ObjectNode discoverResp = (ObjectNode) discoverRespArr.get(0);
 							validationResult = validateDeviceMakeModelSerialNo(sbiProjectTable, validationResult,
-									dataNode);
+									discoverResp);
 						}
-
+					} catch (Exception ex) {
+						// ignore since method may not be "discover"
 					}
-				} catch (Exception e) {
-					// ignore since method may not be "capture" or "rcapture"
 				}
-			}
-			if (!validationResult) {
-				invalidTestCaseId = testRunDetailsDto.getTestcaseId();
-				break;
+				if (validationResult && testRunFullDetails != null && testRunFullDetails.getMethodResponse() != null) {
+					// check if the method is "deviceInfo"
+					try {
+						ArrayNode deviceInfoRespArr = (ArrayNode) getObjectMapper()
+								.readValue(testRunFullDetails.getMethodResponse(), ArrayNode.class);
+						ObjectNode deviceInfoResp = null;
+						if (deviceInfoRespArr != null && deviceInfoRespArr.size() > 0) {
+							deviceInfoResp = (ObjectNode) deviceInfoRespArr.get(0);
+							ObjectNode deviceInfoDecoded = (ObjectNode) deviceInfoResp
+									.get(AppConstants.DEVICE_INFO_DECODED);
+							validationResult = validateDeviceMakeModelSerialNo(sbiProjectTable, validationResult,
+									deviceInfoDecoded);
+						}
+					} catch (Exception ex) {
+						// ignore since method may not be "deviceInfo"
+					}
+				}
+				if (validationResult && testRunFullDetails != null && testRunFullDetails.getMethodResponse() != null) {
+					// check if the method is "capture" or "rcapture"
+					try {
+						ObjectNode methodResponse = (ObjectNode) getObjectMapper()
+								.readValue(testRunFullDetails.getMethodResponse(), ObjectNode.class);
+						JsonNode arrBiometricNodes = methodResponse.get(AppConstants.BIOMETRICS);
+						if (!arrBiometricNodes.isNull() && arrBiometricNodes.isArray()) {
+							for (final JsonNode biometricNode : arrBiometricNodes) {
+								JsonNode dataNode = biometricNode.get(AppConstants.DECODED_DATA);
+								validationResult = validateDeviceMakeModelSerialNo(sbiProjectTable, validationResult,
+										dataNode);
+							}
+
+						}
+					} catch (Exception e) {
+						// ignore since method may not be "capture" or "rcapture"
+					}
+				}
+				if (!validationResult) {
+					invalidTestCaseId = testRunFullDetails.getTestcaseId();
+					break;
+				}
 			}
 		}
 		log.info("sessionId", "idType", "id", "validateDeviceInfo, validationResult: {}", validationResult);
@@ -631,7 +802,7 @@ public class ReportService {
 
 	private ResponseWrapper<TestRunDetailsResponseDto> getTestRunDetails(String testRunId) {
 		ResponseWrapper<TestRunDetailsResponseDto> testRunDetailsResponseDto = testRunService
-				.getTestRunDetails(collectionsService.getPartnerId(), testRunId, true);
+				.getTestRunDetails(getPartnerId(), testRunId, false);
 		return testRunDetailsResponseDto;
 	}
 
@@ -688,7 +859,7 @@ public class ReportService {
 
 	private List<TestCaseDto> getAllTestcases(TestRunDetailsResponseDto testRunDetailsResponseDto) {
 		ResponseWrapper<CollectionTestCasesResponseDto> testcasesForCollection = collectionsService
-				.getTestCasesForCollection(collectionsService.getPartnerId(), testRunDetailsResponseDto.getCollectionId());
+				.getTestCasesForCollection(getPartnerId(), testRunDetailsResponseDto.getCollectionId());
 		List<TestCaseDto> testcasesList = testcasesForCollection.getResponse().getTestcases();
 		return testcasesList;
 	}
@@ -830,19 +1001,17 @@ public class ReportService {
 				responseWrapper.setErrors(CommonUtil.getServiceErr(errorCode, errorMessage));
 			} else {
 				// get the list of reports
-				List<ComplianceTestRunSummaryEntity> listEntity = null;
+				List<ComplianceReportSummaryEntity> listEntity = null;
 				if (isAdmin) {
 					listEntity = complianceTestRunSummaryRepository.findAllByReportStatus(reportStatus);
 				} else {
 					listEntity = complianceTestRunSummaryRepository.findAllBySubmittedReportsPartnerId(getPartnerId());
 				}
 				ObjectMapper objectMapper = getObjectMapper();
-				for (ComplianceTestRunSummaryEntity respEntity : listEntity) {
+				for (ComplianceReportSummaryEntity respEntity : listEntity) {
 					ComplianceTestRunSummaryDto complianceTestRunSummaryDto = (ComplianceTestRunSummaryDto) objectMapper
 							.convertValue(respEntity, new TypeReference<ComplianceTestRunSummaryDto>() {
 							});
-					complianceTestRunSummaryDto.setCollectionName(
-							getCollectionName(respEntity.getCollectionId(), respEntity.getPartnerId()));
 					complianceTestRunSummaryDto.setProjectName(getProjectName(respEntity));
 					responseList.add(complianceTestRunSummaryDto);
 				}
@@ -863,7 +1032,7 @@ public class ReportService {
 		return responseWrapper;
 	}
 
-	private String getProjectName(ComplianceTestRunSummaryEntity respEntity) {
+	private String getProjectName(ComplianceReportSummaryEntity respEntity) {
 		String projectType = respEntity.getProjectType();
 		String projectName = null;
 		if (AppConstants.SBI.equals(projectType)) {
@@ -923,9 +1092,10 @@ public class ReportService {
 						velocityContext.put(STATUS_TEXT, reportStatus.toUpperCase());
 						velocityContext.put("reviewedBy", optionalEntity.get().getUpdBy());
 						DateTimeFormatter formatter = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM);
-						velocityContext.put("reviewDt", formatter.format(optionalEntity.get().getApproveRejectDtimes()));
+						velocityContext.put("reviewDt",
+								formatter.format(optionalEntity.get().getApproveRejectDtimes()));
 					} else {
-						//report should say status as draft only
+						// report should say status as draft only
 						velocityContext.put(STATUS_TEXT, AppConstants.REPORT_STATUS_DRAFT.toUpperCase());
 					}
 					velocityContext.put(ORIGIN_KEY, reportDataDto.getOrigin());
@@ -948,9 +1118,16 @@ public class ReportService {
 					velocityContext.put(TOTAL_TEST_CASES_COUNT, reportDataDto.getTotalTestCasesCount());
 					velocityContext.put(COUNT_OF_PASSED_TEST_CASES, reportDataDto.getCountOfPassedTestCases());
 					velocityContext.put(COUNT_OF_FAILED_TEST_CASES, reportDataDto.getCountOfFailedTestCases());
+					if (reportDataDto.getBiometricScores() != null && reportDataDto.getBiometricType() != null) {
+						velocityContext.put(AGE_GROUPS_STR, reportDataDto.getAgeGroups());
+						velocityContext.put(OCCUPATIONS_STR, reportDataDto.getOccupations());
+						velocityContext.put(RACES_STR, reportDataDto.getRaces());
+						velocityContext.put(BIOMETRIC_TYPE, reportDataDto.getBiometricType());
+						velocityContext.put(BIOMETRIC_SCORES, reportDataDto.getBiometricScores());
+					}
 					log.info("sessionId", "idType", "id", "Added all attributes in velocity template successfully");
 					// 3. merge report data with template
-					String mergedHtml = mergeVelocityTemplate(velocityContext, "testRunReport.vm");
+					String mergedHtml = mergeVelocityTemplate(velocityContext, TEST_RUN_REPORT_VM);
 					// 4. Covert the merged HTML to PDF
 					ByteArrayResource resource = convertHtmltToPdf(mergedHtml);
 					// 5. Send PDF in response
@@ -980,56 +1157,65 @@ public class ReportService {
 		ResponseWrapper<ComplianceTestRunSummaryDto> responseWrapper = new ResponseWrapper<>();
 		ComplianceTestRunSummaryDto complianceTestRunSummaryDto = new ComplianceTestRunSummaryDto();
 		try {
-			log.info("sessionId", "idType", "id", "Started updateReportStatus processing");
-			log.info("sessionId", "idType", "id", "partnerId: " + partnerId);
-			log.info("sessionId", "idType", "id", "oldStatus: " + oldStatus);
-			log.info("sessionId", "idType", "id", "newStatus: " + newStatus);
+			if (validInputRequest(requestDto, newStatus)) {
+				log.info("sessionId", "idType", "id", "Started updateReportStatus processing");
+				log.info("sessionId", "idType", "id", "partnerId: " + partnerId);
+				log.info("sessionId", "idType", "id", "oldStatus: " + oldStatus);
+				log.info("sessionId", "idType", "id", "newStatus: " + newStatus);
 
-			String projectType = requestDto.getProjectType();
-			String projectId = requestDto.getProjectId();
-			String collectionId = requestDto.getCollectionId();
-			String testRunId = requestDto.getTestRunId();
-			logInput(requestDto, projectType, projectId);
-			// 1. get the report data
-			ComplianceTestRunSummaryPK pk = new ComplianceTestRunSummaryPK();
-			pk.setPartnerId(partnerId);
-			pk.setProjectId(projectId);
-			pk.setCollectionId(collectionId);
-			Optional<ComplianceTestRunSummaryEntity> optionalEntity = complianceTestRunSummaryRepository.findById(pk);
-			if (optionalEntity.isPresent() && testRunId.equals(optionalEntity.get().getRunId())
-					&& projectType.equals(optionalEntity.get().getProjectType())) {
-				ComplianceTestRunSummaryEntity entity = optionalEntity.get();
-				if (oldStatus.equals(entity.getReportStatus())) {
-					log.info("sessionId", "idType", "id", "report with status: " + oldStatus + " is available in DB");
-					LocalDateTime nowDate = LocalDateTime.now();
-					entity.setReportStatus(newStatus);
-					if (AppConstants.REPORT_STATUS_REVIEW.equals(newStatus)) {
-						entity.setPartnerComments(requestDto.getPartnerComments());
-						entity.setReviewDtimes(nowDate);
+				String projectType = requestDto.getProjectType();
+				String projectId = requestDto.getProjectId();
+				String collectionId = requestDto.getCollectionId();
+				String testRunId = requestDto.getTestRunId();
+				logInput(requestDto, projectType, projectId);
+				// 1. get the report data
+				ComplianceTestRunSummaryPK pk = new ComplianceTestRunSummaryPK();
+				pk.setPartnerId(partnerId);
+				pk.setProjectId(projectId);
+				pk.setCollectionId(collectionId);
+				Optional<ComplianceTestRunSummaryEntity> optionalEntity = complianceTestRunSummaryRepository.findById(pk);
+				if (optionalEntity.isPresent() && testRunId.equals(optionalEntity.get().getRunId())
+						&& projectType.equals(optionalEntity.get().getProjectType())) {
+					ComplianceTestRunSummaryEntity entity = optionalEntity.get();
+					if (oldStatus.equals(entity.getReportStatus())) {
+						log.info("sessionId", "idType", "id", "report with status: " + oldStatus + " is available in DB");
+						LocalDateTime nowDate = LocalDateTime.now();
+						entity.setReportStatus(newStatus);
+						if (AppConstants.REPORT_STATUS_REVIEW.equals(newStatus)) {
+							entity.setPartnerComments(requestDto.getPartnerComments());
+							entity.setReviewDtimes(nowDate);
+						}
+						if (AppConstants.REPORT_STATUS_APPROVED.equals(newStatus)
+								|| AppConstants.REPORT_STATUS_REJECTED.equals(newStatus)) {
+							entity.setAdminComments(requestDto.getAdminComments());
+							entity.setApproveRejectDtimes(nowDate);
+						}
+						entity.setUpdBy(this.getUserBy());
+						entity.setUpdDtimes(nowDate);
+						ComplianceTestRunSummaryEntity respEntity = complianceTestRunSummaryRepository.save(entity);
+						complianceTestRunSummaryDto = (ComplianceTestRunSummaryDto) getObjectMapper()
+								.convertValue(respEntity, new TypeReference<ComplianceTestRunSummaryDto>() {
+								});
+						responseWrapper.setResponse(complianceTestRunSummaryDto);
+					} else {
+						String errorCode = ToolkitErrorCodes.TOOLKIT_REPORT_STATUS_INVALID_ERR.getErrorCode();
+						String errorMessage = ToolkitErrorCodes.TOOLKIT_REPORT_STATUS_INVALID_ERR.getErrorMessage() + " - "
+								+ entity.getReportStatus();
+						responseWrapper.setErrors(CommonUtil.getServiceErr(errorCode, errorMessage));
 					}
-					if (AppConstants.REPORT_STATUS_APPROVED.equals(newStatus)
-							|| AppConstants.REPORT_STATUS_REJECTED.equals(newStatus)) {
-						entity.setAdminComments(requestDto.getAdminComments());
-						entity.setApproveRejectDtimes(nowDate);
-					}
-					entity.setUpdBy(this.getUserBy());
-					entity.setUpdDtimes(nowDate);
-					ComplianceTestRunSummaryEntity respEntity = complianceTestRunSummaryRepository.save(entity);
-					complianceTestRunSummaryDto = (ComplianceTestRunSummaryDto) getObjectMapper()
-							.convertValue(respEntity, new TypeReference<ComplianceTestRunSummaryDto>() {
-							});
-					responseWrapper.setResponse(complianceTestRunSummaryDto);
 				} else {
-					String errorCode = ToolkitErrorCodes.TOOLKIT_REPORT_STATUS_INVALID_ERR.getErrorCode();
-					String errorMessage = ToolkitErrorCodes.TOOLKIT_REPORT_STATUS_INVALID_ERR.getErrorMessage() + " - "
-							+ entity.getReportStatus();
+					String errorCode = ToolkitErrorCodes.TOOLKIT_REPORT_NOT_AVAILABLE_ERR.getErrorCode();
+					String errorMessage = ToolkitErrorCodes.TOOLKIT_REPORT_NOT_AVAILABLE_ERR.getErrorMessage();
 					responseWrapper.setErrors(CommonUtil.getServiceErr(errorCode, errorMessage));
 				}
-			} else {
-				String errorCode = ToolkitErrorCodes.TOOLKIT_REPORT_NOT_AVAILABLE_ERR.getErrorCode();
-				String errorMessage = ToolkitErrorCodes.TOOLKIT_REPORT_NOT_AVAILABLE_ERR.getErrorMessage();
-				responseWrapper.setErrors(CommonUtil.getServiceErr(errorCode, errorMessage));
 			}
+		} catch (ToolkitException ex) {
+			log.debug("sessionId", "idType", "id", ex.getStackTrace());
+			log.error("sessionId", "idType", "id",
+					"In updateReportStatus method of ReportGenerator Service - " + ex.getMessage());
+			String errorCode = ex.getErrorCode();
+			String errorMessage = ex.getMessage();
+			responseWrapper.setErrors(CommonUtil.getServiceErr(errorCode, errorMessage));
 		} catch (Exception ex) {
 			log.info("sessionId", "idType", "id", "Exception in updateReportStatus " + ex.getLocalizedMessage());
 			log.debug("sessionId", "idType", "id", ex.getStackTrace());
@@ -1046,4 +1232,27 @@ public class ReportService {
 		return responseWrapper;
 	}
 
+	private boolean validInputRequest(ReportRequestDto reportRequestDto, String newStatus) {
+		if (newStatus.equals(AppConstants.REPORT_STATUS_REJECTED)) {
+			String adminComments = reportRequestDto.getAdminComments();
+			if (Objects.isNull(adminComments) || adminComments.equals(BLANK_STRING)) {
+				throw new ToolkitException(ToolkitErrorCodes.INVALID_REQUEST_BODY.getErrorCode(),
+						ToolkitErrorCodes.INVALID_REQUEST_BODY.getErrorMessage());
+			}
+		}
+		validComments(reportRequestDto.getAdminComments());
+		validComments(reportRequestDto.getPartnerComments());
+		return true;
+	}
+
+	private void validComments(String comments) {
+		if (Objects.nonNull(comments) && !comments.equals(BLANK_STRING)) {
+			if (!Pattern.matches(AppConstants.REGEX_PATTERN, comments)) {
+				String exceptionErrorCode = ToolkitErrorCodes.INVALID_CHARACTERS.getErrorCode()
+						+ AppConstants.COMMA_SEPARATOR
+						+ ToolkitErrorCodes.COMMENTS.getErrorCode();
+				throw new ToolkitException(exceptionErrorCode, "Invalid characters are not allowed in comments");
+			}
+		}
+	}
 }
